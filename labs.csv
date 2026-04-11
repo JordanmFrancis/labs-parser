@@ -1,6 +1,6 @@
 date,marker,value,units,range_low,range_high
 2025-01-23,Glucose,71,mg/dL,65,99
-2025-10-10,Glucose,160,mg/dL,65,99
+2025-10-10,Glucose,80,mg/dL,65,99
 2026-02-19,Glucose,81,mg/dL,65,99
 2025-01-23,HbA1c,5.7,%,0,5.7
 2025-07-29,HbA1c,5.4,%,0,5.7

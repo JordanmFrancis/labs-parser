@@ -1,6 +1,9 @@
 import csv
 from pathlib import Path
 from datetime import date
+import anthropic
+from dotenv import load_dotenv
+load_dotenv()
 
 CSV_FILE = Path(__file__).parent / "labs.csv"
 THRESHOLD = 1.12
@@ -60,12 +63,27 @@ def find_trends(labs, marker):
         return "Down"
     else: 
         return "Stable"
+    
+def summarize_labs(flagged_text):
+    client = anthropic.Anthropic()
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=1024,
+        system="You are a lab result analyst. The user will give you a list of out-of-range blood markers with their values, reference ranges, percent deviation, and trend direction. Summarize the findings in plain English. Be specific — name the markers, state whether they're high or low, and note any trends. Keep it to 2-4 sentences. No disclaimers, no 'consult your doctor.'",
+        messages=[
+            {"role": "user", "content": flagged_text}
+        ]
+    )
+
+    return response.content[0].text
 
 def main():
     all_labs = load_csv(CSV_FILE)
     latest = get_most_recent(all_labs)
     flagged = flag_out_of_range(latest)
     flagged = sorted(flagged, key=lambda lab: percent_out_of_range(lab), reverse=True)
+    print(f"Flagged Labs (out of range):")
+    lines = []
     for lab in flagged:
         percent = percent_out_of_range(lab)
         trend = find_trends(all_labs, lab["marker"])
@@ -73,7 +91,17 @@ def main():
             direction = "above upper limit"
         elif lab["value"] < lab["range_low"]:
             direction = "below lower limit"
-        print(f"{lab['marker']}: {lab['value']} {lab['units']} Reference Range: {lab['range_low']} - {lab['range_high']} {round(percent, 1)}% {direction}. Trend: {trend}")
+        line = f"{lab['marker']}: {lab['value']} {lab['units']} Reference Range: {lab['range_low']} - {lab['range_high']} {round(percent, 1)}% {direction}. Trend: {trend}"
+        lines.append(line)
+        print(line)
+        print("---")
+
+    try:
+        summary = summarize_labs("\n".join(lines))
+        print(f"\n--- AI Summary ---\n{summary}")
+    except Exception as e:
+        print(f"\nAI summary unavailable: {e}")
+
 
 if __name__ == "__main__":
     main()
