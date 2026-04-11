@@ -1,0 +1,30 @@
+# Labs Parser
+Labs Parser was built to make reading my labs easier to understand. The program takes a CSV file with lab values and returns out of range markers, how far out of range they are, and whether they are trending up or down. 
+
+## How to use
+Clone repo and replace labs.csv with your csv file. The CSV format should be exactly this:
+```csv
+date,marker,value,units,range_low,range_high
+2024-02-13,Insulin,18.2,uIU/mL,2.6,24.9
+2024-06-15,Insulin,22.1,uIU/mL,2.6,24.9
+2024-02-13,LDL,142,mg/dL,0,100
+2024-06-15,LDL,138,mg/dL,0,100
+2024-02-13,HbA1c,5.4,%,4.0,5.6
+```
+Run the program, with `python labs_parser.py` and see your out of range labs sorted for you!
+
+## Example output
+```
+Lp(a): 125.0 nmol/L Reference Range: 0.0 - 75.0 66.7% above upper limit. Trend: No Trend
+HDL: 41.0 mg/dL Reference Range: 45.0 - 100.0 8.9% below lower limit. Trend: Stable
+Globulin: 2.0 g/dL Reference Range: 2.1 - 3.5 4.8% below lower limit. Trend: Stable
+```
+
+## Development in progress
+I plan to add new features in the future:
+- **Anthropic API integration for plain-English summaries**
+- **PDF/Photo Upload via Anthropic vision for easier use**
+- **Multiple CSV upload for more context parsing**
+- **API tool calls, AI will be able to look up optimal ranges, calculate HDL/LDL ratio, etc.**
+- **UI frontend for non-terminal users**
+
