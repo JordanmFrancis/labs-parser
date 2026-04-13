@@ -28,11 +28,15 @@ Your Lp(a) is significantly elevated at 125.0 nmol/L, which is 66.7% above the n
 
 ```
 
+## V2
+Added Anthropic API for plain english summaries
+
+## V3
+Added tool calling, the agent now has access to tools to look up the optimal range of a marker, get the users historical data for a given marker, and do calculations to get marker ratios such as HDL/Total Cholesterol ratio.
+
 ## Development in progress
 I plan to add new features in the future:
-- **Anthropic API integration for plain-English summaries**
 - **PDF/Photo Upload via Anthropic vision for easier use**
 - **Multiple CSV upload for more context parsing**
-- **API tool calls, AI will be able to look up optimal ranges, calculate HDL/LDL ratio, etc.**
 - **UI frontend for non-terminal users**
 
