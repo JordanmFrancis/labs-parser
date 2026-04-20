@@ -2,10 +2,12 @@ import csv
 import json
 from pathlib import Path
 from datetime import date
+import sys
 import anthropic
 from dotenv import load_dotenv
 load_dotenv()
 
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".webp"}
 CSV_FILE = Path(__file__).parent / "labs.csv"
 THRESHOLD = 1.12
 # Load the labs.csv file
@@ -27,6 +29,22 @@ def load_csv(path):
                 print(f"Warning: skipping bad row — {e}")
                 continue
     return labs
+
+
+def load_file(file_path: str) -> list[dict]:
+    path = Path(file_path)
+    ext = path.suffix.lower()
+    
+    if ext == ".csv":
+        return load_csv(path)       # ← still uses load_csv
+    elif ext == ".pdf":
+        from pdf_parser import parse_pdf
+        return normalize_rows(parse_pdf(file_path))
+    elif ext in IMAGE_EXTENSIONS:
+        from image_parser import parse_image
+        return normalize_rows(parse_image(file_path))
+    
+
 #Filter out the most recent lab result for each marker
 def get_most_recent(labs):
     latest = {}
@@ -44,13 +62,18 @@ def flag_out_of_range(labs):
     return out_of_range
 # Calculate how far out of range a lab value is as a percentage of the reference range
 def percent_out_of_range(lab):
-    if lab["value"] > lab["range_high"]:
-        return ((lab["value"] / lab["range_high"]) -1) *100
+    if lab["value"] > lab["range_high"] and lab["range_high"] != 0:
+        return ((lab["value"] / lab["range_high"]) - 1) * 100
+    elif lab["value"] > lab["range_high"] and lab["range_high"] == 0:
+        return 100
     elif lab["value"] < lab["range_low"]:
         if lab["value"] < 0:
             return "Invalid Value"
+        if lab["range_low"] == 0:
+            return 100
         return ((lab["range_low"] - lab["value"]) / lab["range_low"]) * 100
-    else: return 0
+    else:
+        return 0
     
 # Determine if a lab is trending up or down
 def find_trends(labs, marker):
@@ -231,10 +254,27 @@ def summarize_labs(flagged_text, all_labs):
     return "Tool loop exceeded max iterations"
 
 
+def normalize_rows(rows: list[dict]) -> list[dict]:
+    normalized = []
+    for row in rows:
+        normalized.append({
+            "date": date.today(),
+            "marker": row["marker"],
+            "value": row["value"] if row["value"] is not None else 0,
+            "units": row.get("unit", row.get("units", "")),
+            "range_low": row.get("reference_low", row.get("range_low", 0)) or 0,
+            "range_high": row.get("reference_high", row.get("range_high", 0)) or 0,
+        })
+    return normalized
+
+
 # Main function to run the analysis
 def main():
-    
-    all_labs = load_csv(CSV_FILE)
+    if len(sys.argv) < 2:
+        file_path = str(CSV_FILE)
+    else:
+        file_path = sys.argv[1]
+    all_labs = load_file(file_path)
     latest = get_most_recent(all_labs)
     flagged = flag_out_of_range(latest)
     flagged = sorted(flagged, key=lambda lab: percent_out_of_range(lab), reverse=True)
