@@ -160,7 +160,7 @@ def get_historical_values(marker: str, labs: list) -> dict:
         if lab["marker"] == marker:
             historical_values.append(lab)
     historical_values = sorted(historical_values, key=lambda r: r["date"])
-    historical_values = [{"date": lab["date"].isoformat(), "value": lab["value"], "units": lab["units"]} for lab in historical_values]
+    historical_values = [{"date": lab["date"] if isinstance(lab["date"], str) else lab["date"].isoformat(), "value": lab["value"], "units": lab["units"]} for lab in historical_values]
     return historical_values
 
 
