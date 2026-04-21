@@ -5,6 +5,10 @@ from datetime import date
 import sys
 import anthropic
 from dotenv import load_dotenv
+import hashlib
+from models import Draw, LabResult
+from db import init_db, insert_draw
+
 load_dotenv()
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic", ".webp"}
@@ -275,6 +279,23 @@ def main():
     else:
         file_path = sys.argv[1]
     all_labs = load_file(file_path)
+
+    init_db()
+    file_hash = hashlib.md5(Path(file_path).read_bytes()).hexdigest()
+    draw = Draw(
+        date=all_labs[0]["date"],
+        source=Path(file_path).name,
+        values=[
+            LabResult(marker=row["marker"], value=row["value"])
+            for row in all_labs
+        ]
+    )
+    try:
+        draw_id = insert_draw(draw, file_hash)
+        print(f"Saved to database as draw #{draw_id}")
+    except Exception as e:
+        print(f"DB save skipped: {e}")
+
     latest = get_most_recent(all_labs)
     flagged = flag_out_of_range(latest)
     flagged = sorted(flagged, key=lambda lab: percent_out_of_range(lab), reverse=True)

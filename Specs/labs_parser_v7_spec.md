@@ -28,18 +28,42 @@ FastAPI is async-first, uses Pydantic for validation (I already have my models f
 
 ## API Design
 
-Eight endpoints. RESTful where it makes sense, RPC-style where it doesn't.
+Fourteen endpoints. RESTful where it makes sense, RPC-style where it doesn't. Organized by the frontend screens they serve.
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| `POST` | `/draws/import` | Upload a CSV or PDF, parse it, store it. Returns the new `draw_id`. |
-| `GET` | `/draws` | List all draws (paginated). |
-| `GET` | `/draws/{draw_id}` | Get a single draw with all its values. |
-| `DELETE` | `/draws/{draw_id}` | Delete a draw. |
-| `GET` | `/markers/{marker}/history` | Full history of a marker. |
-| `POST` | `/analyze/{draw_id}` | Run the v3 tool use summary on a draw. Returns SSE stream. |
-| `GET` | `/markers/{marker}/optimal` | Look up optimal range (cached). |
-| `GET` | `/health` | Healthcheck. Returns `{"status": "ok"}`. |
+### Draws (Upload screen)
+
+| Method | Path | Purpose | Priority |
+|--------|------|---------|----------|
+| `POST` | `/draws/parse` | Upload a CSV/PDF/image, parse it, return extracted rows with confidence scores. **Nothing saved yet.** | 🟢 MVP |
+| `POST` | `/draws/confirm` | Accept reviewed/corrected rows from the parse step, write to DB. Returns `draw_id`. | 🟢 MVP |
+| `GET` | `/draws` | List all draws (paginated). | 🟢 MVP |
+| `GET` | `/draws/{draw_id}` | Get a single draw with all its results. | 🟢 MVP |
+| `DELETE` | `/draws/{draw_id}` | Delete a draw. | 🟢 MVP |
+
+### Markers (Dashboard + Marker Detail screens)
+
+| Method | Path | Purpose | Priority |
+|--------|------|---------|----------|
+| `GET` | `/markers` | List all marker definitions (name, short_name, unit, ranges, optimal, group). | 🟢 MVP |
+| `GET` | `/markers/{marker}` | Single marker definition + latest value + flag status. | 🟢 MVP |
+| `GET` | `/markers/{marker}/history` | Full time-series for a marker. Shape: `[{date, value}]`. | 🟢 MVP |
+
+### Analysis (Dashboard + Marker Detail chat)
+
+| Method | Path | Purpose | Priority |
+|--------|------|---------|----------|
+| `POST` | `/analyze/{draw_id}` | Run the v3 tool use summary on a draw. Returns SSE stream. | 🟢 MVP |
+| `GET` | `/dashboard/stats` | Aggregated stats: total markers, flagged count, last draw date, draws count. | 🟢 MVP |
+| `GET` | `/markers/{marker}/optimal` | Look up optimal range (cached from DB, falls back to Haiku call). | 🟡 phase 2 |
+| `POST` | `/chat/{marker}` | Per-marker scoped chat. SSE stream. | 🟡 phase 2 |
+
+### System
+
+| Method | Path | Purpose | Priority |
+|--------|------|---------|----------|
+| `GET` | `/health` | Healthcheck. Returns `{"status": "ok"}`. | 🟢 MVP |
+
+Agent run and protocol endpoints are deferred to v12 — they depend on the agentic loop.
 
 ## Project Structure
 
@@ -80,7 +104,11 @@ Practical rules I'll follow:
 
 I'll need to update v5's `db.py` to async. Sync version stays for the CLI.
 
-## File Upload Handler
+## Two-Step Upload Flow
+
+The frontend prototype has a staged upload: parse → review ambiguities → save. This is a deliberate design choice — vision extraction isn't perfect (the "9.l" vs "9.1" problem from v4), and new markers might appear that aren't in the DB yet. The user needs a chance to review before anything hits the database.
+
+### Step 1: Parse (nothing saved)
 
 ```python
 from fastapi import FastAPI, UploadFile, HTTPException
@@ -88,25 +116,59 @@ import hashlib
 
 app = FastAPI()
 
-@app.post("/draws/import")
-async def import_draw(file: UploadFile):
+@app.post("/draws/parse")
+async def parse_draw(file: UploadFile):
     contents = await file.read()
     file_hash = hashlib.sha256(contents).hexdigest()
+
+    # Check for duplicate before doing expensive parsing
+    if await file_already_imported(file_hash):
+        raise HTTPException(409, "This file was already imported")
 
     if file.filename.endswith(".csv"):
         rows = parse_csv_bytes(contents)
     elif file.filename.endswith(".pdf"):
         rows = await parse_pdf_bytes(contents)
+    elif file.filename.suffix.lower() in {".jpg", ".jpeg", ".png", ".heic"}:
+        rows = await parse_image_bytes(contents)
     else:
         raise HTTPException(400, f"Unsupported file type: {file.filename}")
 
-    try:
-        draw_id = await insert_draw(rows, file_hash, source=file.filename)
-    except DuplicateFileError:
-        raise HTTPException(409, "This file was already imported")
+    # Classify each row
+    staged = []
+    for row in rows:
+        marker_id = await resolve_marker_name(row.marker)
+        status = "ok"
+        reason = None
+        if marker_id is None:
+            status = "review"
+            reason = "New marker — map or create?"
+        elif row.confidence is not None and row.confidence < 0.85:
+            status = "review"
+            reason = f"OCR confidence {row.confidence:.2f} — \"{row.raw_text}\" vs \"{row.value}\""
+        elif await is_flagged(row.value, marker_id):
+            status = "flagged"
+        staged.append({**row.model_dump(), "status": status, "reason": reason, "marker_id": marker_id})
 
-    return {"draw_id": draw_id, "rows_imported": len(rows)}
+    return {"file_hash": file_hash, "source": file.filename, "rows": staged}
 ```
+
+### Step 2: Confirm (save to DB)
+
+```python
+@app.post("/draws/confirm")
+async def confirm_draw(payload: ConfirmPayload):
+    """Accept reviewed rows from the parse step. Rows with status='skip' are dropped."""
+    draw_id = await insert_draw(
+        date=payload.date,
+        source=payload.source,
+        file_hash=payload.file_hash,
+        rows=[r for r in payload.rows if r.status != "skip"]
+    )
+    return {"draw_id": draw_id, "rows_saved": len(payload.rows)}
+```
+
+The frontend sends back the corrected rows — user may have changed values, mapped unknown markers, or skipped rows.
 
 ## Streaming Analysis via SSE
 
@@ -171,6 +233,11 @@ Auto-reloads on code change. Hit `http://localhost:8000/docs` for the auto-gener
 | Slow PDF blocks event loop | Wrap in `asyncio.to_thread` (sync `pdfplumber`) or use background task |
 | Client disconnects mid-stream | Catch `asyncio.CancelledError`, log it, clean up |
 | OpenAPI docs leak in production | Set `docs_url=None, redoc_url=None` in prod env |
+| Parse step returns unknown marker | Row gets `status: "review"`, frontend shows "map or create?" UI |
+| Parse step returns low-confidence row | Row gets `status: "review"`, frontend shows raw OCR text + proposed value |
+| User corrects a value in confirm step | Frontend sends the corrected value; backend saves it as-is |
+| User skips a row in confirm step | Row excluded from DB insert |
+| User closes browser after parse, before confirm | Nothing saved — parse is stateless. User re-uploads to try again. |
 
 ## Files to Add/Change
 

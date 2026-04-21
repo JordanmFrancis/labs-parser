@@ -104,12 +104,16 @@ class LabValueExtraction(BaseModel):
     ref_low: float | None = None
     ref_high: float | None = None
     date: str | None = None
+    confidence: float | None = None   # 0.0–1.0 extraction confidence
+    raw_text: str | None = None       # original OCR text before parsing (e.g., "9.l")
 
 class ExtractedRows(BaseModel):
     rows: list[LabValueExtraction]
 ```
 
 Force Claude to return `ExtractedRows`. No more `json.loads(strip_code_fences(...))`.
+
+The `confidence` and `raw_text` fields are critical for the frontend's Upload screen. When vision extraction confidence is below 0.85, the frontend flags the row for human review and shows the raw OCR text side-by-side with the proposed parsed value (e.g., "9.l" → proposed "9.1 umol/L"). The system prompt for the vision call needs to be updated to instruct Claude to return a confidence score per row and the raw text it read from the image. Example system prompt addition: "For each row, include a confidence score (0.0 to 1.0) for how certain you are of the extracted value, and include the raw text exactly as printed on the document in `raw_text`."
 
 ## What Stays the Same
 
